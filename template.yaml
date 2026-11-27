@@ -1,0 +1,199 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Projeto 2 - monitor de URLs agendado (Scheduler, Lambda, DynamoDB, S3 + CloudFront, SNS, CloudWatch)
+
+Parameters:
+  EmailAlerta:
+    Type: String
+    Description: E-mail que recebe os alertas (confirme a assinatura no link que chega por e-mail)
+
+Globals:
+  Function:
+    Runtime: python3.13
+    Architectures: [arm64]
+
+Resources:
+  # ---------- Dados ----------
+  UrlsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+        - { AttributeName: url, AttributeType: S }
+      KeySchema:
+        - { AttributeName: url, KeyType: HASH }
+      ProvisionedThroughput: { ReadCapacityUnits: 1, WriteCapacityUnits: 1 }
+
+  ChecagensTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+        - { AttributeName: url, AttributeType: S }
+        - { AttributeName: verificadoEm, AttributeType: S }
+      KeySchema:
+        - { AttributeName: url, KeyType: HASH }
+        - { AttributeName: verificadoEm, KeyType: RANGE }
+      ProvisionedThroughput: { ReadCapacityUnits: 1, WriteCapacityUnits: 1 }
+      TimeToLiveSpecification:
+        AttributeName: expiraEm
+        Enabled: true
+
+  # ---------- Alertas ----------
+  AlertasTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      Subscription:
+        - Protocol: email
+          Endpoint: !Ref EmailAlerta
+
+  # ---------- Página de status ----------
+  StatusBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  StatusOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub "${AWS::StackName}-status"
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  StatusDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: Monitor de URLs - pagina de status
+        DefaultRootObject: index.html
+        PriceClass: PriceClass_100
+        HttpVersion: http2
+        Origins:
+          - Id: status-bucket
+            DomainName: !GetAtt StatusBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt StatusOAC.Id
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+        DefaultCacheBehavior:
+          TargetOriginId: status-bucket
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD]
+          CachedMethods: [GET, HEAD]
+          Compress: true
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6 # Managed-CachingOptimized (respeita o Cache-Control do objeto)
+
+  StatusBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref StatusBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowCloudFrontServicePrincipal
+            Effect: Allow
+            Principal: { Service: cloudfront.amazonaws.com }
+            Action: s3:GetObject
+            Resource: !Sub "${StatusBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${StatusDistribution}"
+
+  # ---------- Lambda agendada ----------
+  CheckUrlsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/check_urls/
+      Handler: app.lambda_handler
+      Timeout: 30
+      LoggingConfig:
+        LogGroup: !Ref CheckUrlsLogGroup
+      Environment:
+        Variables:
+          TABELA_URLS: !Ref UrlsTable
+          TABELA_CHECAGENS: !Ref ChecagensTable
+          BUCKET_STATUS: !Ref StatusBucket
+          TOPICO_ARN: !Ref AlertasTopic
+      Policies:
+        - Statement:
+            - Sid: LerEAtualizarUrls
+              Effect: Allow
+              Action: [dynamodb:Scan, dynamodb:UpdateItem]
+              Resource: !GetAtt UrlsTable.Arn
+            - Sid: GravarChecagens
+              Effect: Allow
+              Action: dynamodb:PutItem
+              Resource: !GetAtt ChecagensTable.Arn
+            - Sid: GravarStatusJson
+              Effect: Allow
+              Action: s3:PutObject
+              Resource: !Sub "${StatusBucket.Arn}/status.json"
+            - Sid: PublicarAlerta
+              Effect: Allow
+              Action: sns:Publish
+              Resource: !Ref AlertasTopic
+      Events:
+        A cada5Minutos:
+          Type: ScheduleV2
+          Properties:
+            Name: !Sub "${AWS::StackName}-check-urls-5min"
+            ScheduleExpression: rate(5 minutes)
+            RetryPolicy:
+              MaximumRetryAttempts: 0
+
+  CheckUrlsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-check-urls"
+      RetentionInDays: 7
+
+  # ---------- Alarmes ----------
+  ErrosAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${AWS::StackName}-erros"
+      AlarmDescription: A Lambda que testa as URLs falhou (problema no monitor, nao nos sites)
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - { Name: FunctionName, Value: !Ref CheckUrlsFunction }
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertasTopic]
+
+  ParadoAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${AWS::StackName}-parado"
+      AlarmDescription: Ninguem chamou a Lambda em 15 minutos (agendamento parado)
+      Namespace: AWS/Lambda
+      MetricName: Invocations
+      Dimensions:
+        - { Name: FunctionName, Value: !Ref CheckUrlsFunction }
+      Statistic: Sum
+      Period: 900
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: breaching
+      AlarmActions: [!Ref AlertasTopic]
+
+Outputs:
+  SiteUrl:
+    Value: !Sub "https://${StatusDistribution.DomainName}"
+  DistributionId:
+    Value: !Ref StatusDistribution
+  StatusBucketName:
+    Value: !Ref StatusBucket
+  UrlsTableName:
+    Value: !Ref UrlsTable
+  CheckUrlsFunctionName:
+    Value: !Ref CheckUrlsFunction
