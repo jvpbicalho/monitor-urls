@@ -137,7 +137,7 @@ Resources:
               Action: sns:Publish
               Resource: !Ref AlertasTopic
       Events:
-        A cada5Minutos:
+        ACada5Minutos:
           Type: ScheduleV2
           Properties:
             Name: !Sub "${AWS::StackName}-check-urls-5min"
