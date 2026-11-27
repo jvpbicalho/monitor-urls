@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Status dos sites</title>
+  <style>
+    :root { --fundo: #f6f7f9; --cartao: #fff; --texto: #1d2129; --suave: #6b7280; --ok: #15803d; --erro: #b91c1c; --borda: #e5e7eb; }
+    @media (prefers-color-scheme: dark) {
+      :root { --fundo: #111315; --cartao: #1b1e22; --texto: #e8eaed; --suave: #9aa0a6; --ok: #4ade80; --erro: #f87171; --borda: #2c3036; }
+    }
+    body { margin: 0; font-family: system-ui, sans-serif; background: var(--fundo); color: var(--texto); }
+    main { max-width: 760px; margin: 0 auto; padding: 24px 16px; }
+    h1 { font-size: 1.5rem; margin: 0 0 4px; }
+    #resumo { color: var(--suave); margin: 0 0 20px; }
+    ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
+    li { background: var(--cartao); border: 1px solid var(--borda); border-radius: 10px; padding: 14px 16px; display: flex; gap: 12px; align-items: center; }
+    .ponto { width: 12px; height: 12px; border-radius: 50%; flex: none; }
+    .ok .ponto { background: var(--ok); }
+    .falha .ponto { background: var(--erro); }
+    .info { flex: 1; min-width: 0; }
+    .nome { font-weight: 600; }
+    .url { color: var(--suave); font-size: .85rem; overflow-wrap: anywhere; }
+    .dados { text-align: right; font-size: .85rem; color: var(--suave); }
+    .estado { font-weight: 600; }
+    .ok .estado { color: var(--ok); }
+    .falha .estado { color: var(--erro); }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Status dos sites</h1>
+    <p id="resumo">Carregando...</p>
+    <ul id="lista"></ul>
+  </main>
+  <script>
+    function el(tag, classe, texto) {
+      const e = document.createElement(tag);
+      if (classe) e.className = classe;
+      if (texto !== undefined) e.textContent = texto;
+      return e;
+    }
+
+    async function carregar() {
+      const resumo = document.getElementById('resumo');
+      const lista = document.getElementById('lista');
+      try {
+        const r = await fetch('status.json', { cache: 'no-store' });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const dados = await r.json();
+        lista.replaceChildren();
+        let foraDoAr = 0;
+        for (const s of dados.urls) {
+          if (!s.ok) foraDoAr++;
+          const li = el('li', s.ok ? 'ok' : 'falha');
+          li.append(el('span', 'ponto'));
+          const info = el('div', 'info');
+          info.append(el('div', 'nome', s.nome || s.url), el('div', 'url', s.url));
+          const d = el('div', 'dados');
+          d.append(el('div', 'estado', s.ok ? 'No ar' : 'Fora do ar'));
+          d.append(el('div', '', (s.statusCode || s.erro || '?') + ' · ' + s.ms + ' ms'));
+          li.append(info, d);
+          lista.append(li);
+        }
+        const quando = new Date(dados.geradoEm).toLocaleString('pt-BR');
+        resumo.textContent = (foraDoAr === 0 ? 'Todos os sites no ar' : foraDoAr + ' fora do ar') + ' · atualizado em ' + quando;
+      } catch (e) {
+        resumo.textContent = 'Ainda sem dados (status.json não encontrado). ' + e.message;
+      }
+    }
+
+    carregar();
+    setInterval(carregar, 60000);
+  </script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+{
+  "geradoEm": "2026-11-27T17:30:00Z",
+  "urls": [
+    {"url": "https://www.google.com", "nome": "Google", "ok": true, "statusCode": 200, "ms": 143, "verificadoEm": "2026-11-27T17:30:00Z"},
+    {"url": "https://d2po45patjdfj8.cloudfront.net", "nome": "Inventário da liga", "ok": false, "statusCode": 503, "ms": 812, "verificadoEm": "2026-11-27T17:30:00Z"}
+  ]
+}

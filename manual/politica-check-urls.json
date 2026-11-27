@@ -1,0 +1,29 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "LerEAtualizarUrls",
+      "Effect": "Allow",
+      "Action": ["dynamodb:Scan", "dynamodb:UpdateItem"],
+      "Resource": "arn:aws:dynamodb:us-east-2:959435417059:table/monitor-urls"
+    },
+    {
+      "Sid": "GravarChecagens",
+      "Effect": "Allow",
+      "Action": "dynamodb:PutItem",
+      "Resource": "arn:aws:dynamodb:us-east-2:959435417059:table/monitor-checagens"
+    },
+    {
+      "Sid": "GravarStatusJson",
+      "Effect": "Allow",
+      "Action": "s3:PutObject",
+      "Resource": "arn:aws:s3:::monitor-status-jvpb-2026/status.json"
+    },
+    {
+      "Sid": "PublicarAlerta",
+      "Effect": "Allow",
+      "Action": "sns:Publish",
+      "Resource": "arn:aws:sns:us-east-2:959435417059:monitor-alertas"
+    }
+  ]
+}
